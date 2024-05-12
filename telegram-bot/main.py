@@ -128,7 +128,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
   #no functions were execute
     else:
         await context.bot.send_message(chat_id=update.effective_chat.id,
-                                    text=initial_response_message.content) 
+                                    text=initial_response_message.content)
 
 
 
@@ -152,7 +152,18 @@ async def image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     image_response = requests.get(image_url)
     await context.bot.send_photo(chat_id=update.effective_chat.id, photo=image_response.content)
 
-
+async def transcribe_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # make sure we have a voice file to transcribe
+    voice_id = update.message.voice.file_id
+    if voice_id:
+        file = await context.bot.get_file(voice_id)
+        await file.download_to_drive(f"voice_note_{voice_id}.ogg")
+        await update.message.reply_text("Voice note downloaded, transcribing now")
+        audo_file = open(f"voice_note_{voice_id}.ogg", "rb")
+        transcript = openai.audio.transcriptions.create(
+            model="whisper-1", file=audo_file
+        )
+        await update.message.reply_text(f"Transcript finished:\n {transcript.text}")
 
 if __name__ == "__main__":
     # Set up the Telegram bot with the provided token.
@@ -163,14 +174,14 @@ if __name__ == "__main__":
     chat_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), chat)
     mozilla_handler = CommandHandler('mozilla', mozilla)
     image_handler = CommandHandler('image', image)
+    voice_hander = MessageHandler(filters.VOICE, transcribe_message)
 
     # Add command handlers to the application.
     application.add_handler(start_handler)
     application.add_handler(chat_handler)
     application.add_handler(image_handler)
     application.add_handler(mozilla_handler)
+    application.add_handler(voice_hander)
 
     # Start the bot and poll for new messages.
     application.run_polling()
-
-    
