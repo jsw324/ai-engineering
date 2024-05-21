@@ -16,6 +16,7 @@ import pandas as pd
 import numpy as np
 from questions import answer_question
 import requests
+from replicate import Client
 
 CODE_PROMPT = """
 Here are two input:output examples for code generation. Please use these and follow the styling for future requests that you think are pertinent to the request.
@@ -55,6 +56,7 @@ load_dotenv()
 
 # Initialize the OpenAI client with an API key.
 openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+replicate_token = os.getenv('REPLICATE_API_TOKEN')
 # Get the Telegram bot token from the environment.
 tg_bot_token = os.getenv("TG_BOT_TOKEN")
 print(os.getcwd())
@@ -76,60 +78,82 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
+client = Client(api_token=replicate_token)
+model = client.models.get("meta/llama-2-70b-chat")
+version = model.versions.get("2c1608e18606fad2812020dc541930f2d0495ce32eee50074220b87300bc16e1")
+
+message_history = []
+
+# async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+#     # Append the user's message to the message history.
+#     messages.append({"role": "user", "content": update.message.text})
+#     # Generate a response from the OpenAI API using the accumulated messages.
+#     initial_response = openai.chat.completions.create(
+#         model="gpt-3.5-turbo",
+#         messages=messages,
+#         tools=functions
+#     )
+#     # Extract the response content from the API's response.
+#     initial_response_message = initial_response.choices[0].message
+
+#     # Append the AI's response to the message history.
+#     messages.append(initial_response_message)
+#     final_response = None
+#     tool_calls = initial_response_message.tool_calls
+#     if tool_calls:
+#         for tool_call in tool_calls:
+#             name = tool_call.function.name
+#             args = json.loads(tool_call.function.arguments)
+#             response = run_function(name, args)
+#             print(tool_calls)
+#             messages.append({
+#                 "tool_call_id": tool_call.id,
+#                 "role": "tool",
+#                 "name": name,
+#                 "content": str(response),
+#             })
+#             if name == 'svg_to_png_bytes':
+#                 await context.bot.send_photo(chat_id=update.effective_chat.id,
+#                                             photo=response)
+#             # Generate the final response
+#             final_response = openai.chat.completions.create(
+#                 model="gpt-3.5-turbo",
+#                 messages=messages,
+#             )
+#             final_answer = final_response.choices[0].message
+
+#             # Send the final response if it exists
+#             if (final_answer):
+#                 messages.append(final_answer)
+#                 await context.bot.send_message(chat_id=update.effective_chat.id,
+#                                             text=final_answer.content)
+#             else:
+#                 # Send an error message if something went wrong
+#                 await context.bot.send_message(
+#                     chat_id=update.effective_chat.id,
+#                     text='something wrong happened, please try again')
+#   #no functions were execute
+#     else:
+#         await context.bot.send_message(chat_id=update.effective_chat.id,
+#                                     text=initial_response_message.content)
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Append the user's message to the message history.
-    messages.append({"role": "user", "content": update.message.text})
-    # Generate a response from the OpenAI API using the accumulated messages.
-    initial_response = openai.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=messages,
-        tools=functions
-    )
-    # Extract the response content from the API's response.
-    initial_response_message = initial_response.choices[0].message
+  message_history.append({"isUser": True, "text": update.message.text})
 
-    # Append the AI's response to the message history.
-    messages.append(initial_response_message)
-    final_response = None
-    tool_calls = initial_response_message.tool_calls
-    if tool_calls:
-        for tool_call in tool_calls:
-            name = tool_call.function.name
-            args = json.loads(tool_call.function.arguments)
-            response = run_function(name, args)
-            print(tool_calls)
-            messages.append({
-                "tool_call_id": tool_call.id,
-                "role": "tool",
-                "name": name,
-                "content": str(response),
-            })
-            if name == 'svg_to_png_bytes':
-                await context.bot.send_photo(chat_id=update.effective_chat.id,
-                                            photo=response)
-            # Generate the final response
-            final_response = openai.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=messages,
-            )
-            final_answer = final_response.choices[0].message
+  prompt = generate_prompt(message_history)
 
-            # Send the final response if it exists
-            if (final_answer):
-                messages.append(final_answer)
-                await context.bot.send_message(chat_id=update.effective_chat.id,
-                                            text=final_answer.content)
-            else:
-                # Send an error message if something went wrong
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text='something wrong happened, please try again')
-  #no functions were execute
-    else:
-        await context.bot.send_message(chat_id=update.effective_chat.id,
-                                    text=initial_response_message.content)
+  prediction = client.predictions.create(version=version,
+                                         input={"prompt": prompt})
+  await context.bot.send_message(chat_id=update.effective_chat.id,
+                                 text="Let me think...")
+  prediction.wait()
 
+  human_readable_output = ''.join(prediction.output).strip()
+
+  await context.bot.send_message(chat_id=update.effective_chat.id,
+                                 text=human_readable_output)
+
+  message_history.append({"isUser": False, "text": human_readable_output})
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -164,6 +188,11 @@ async def transcribe_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
             model="whisper-1", file=audo_file
         )
         await update.message.reply_text(f"Transcript finished:\n {transcript.text}")
+
+def generate_prompt(messages):
+  return "\n".join(f"[INST] {message['text']} [/INST]"
+                   if message['isUser'] else message['text']
+                   for message in messages)
 
 if __name__ == "__main__":
     # Set up the Telegram bot with the provided token.
